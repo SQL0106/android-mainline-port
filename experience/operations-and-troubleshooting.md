@@ -197,3 +197,37 @@ done
 - 每个实验写四行：**改了什么 / 现象 / 断点在哪 / 结论**。没有断点的结论一律标「未定」。
 - 关掉的通道写「已关闭 + 机理」，不要只写「试过不行」——后者下次还会被重新捡起来。
 - 判断「某件事做过没有」时读记录文件，不凭印象；做之前先搜一遍经验库，避免重造轮子。
+
+---
+
+## 7. 启动实验的判据（2026-11-08，被三次误判教训出来的）
+
+**铁律：`fastboot boot` 返回 OKAY、SSH 回来、uptime 小，全都不算成功。**
+
+1. **唯一可靠判据 = cmdline 里的 nonce**。打包时塞一个内核不解析的惰性参数（`zzram=<epoch>`），启动后 `cat /proc/cmdline | grep zzram` 对得上才算「我的内核正在跑」；对不上就是回落到了 flash 内核。不要拿 netconsole 当指纹——它可能根本没编进内核（`# CONFIG_NETCONSOLE is not set` 时 cmdline 里那串是被忽略的死参数）。
+2. **每次启动换新 nonce**。同一个固定标记被多个镜像共用时，事后无法分辨是哪一次启动的现场。
+3. **别把「回落」当「起来了」**。回落路径下手机一样会 SSH 回来、服务一样正常，这是最坑的假阳性。
+
+## 8. 初始化 ramdisk 里的探针/看门狗怎么写才不静默失效
+
+实测踩过的四个坑（`ramdisk-nomod/scripts/{init-top/00-zz-arm,zz-probe,zz-wd,zz-ckpt}` 是修好后的样子）：
+
+- **`/run` 是 `nodev,noexec,nosuid`**（initramfs 的 `init` 自己挂的）。把 busybox `cp` 到 `/run` 再执行 → EACCES，探针一条都写不出来，而且错误被 `2>/dev/null` 吞掉。正解：在 `/run/zz` 上**再挂一个允许 exec 的 tmpfs**，它会随 `mount -o move /run` 一起进真实根。
+- **`switch_root` 会把 `/run`、`/dev` 整棵搬走**，后台进程还在老根视图里，路径全空。正解：改用「搬过去之后的位置」`/root/run/zz/busybox` 作入口，并 `chroot /root` 后再写日志（真实根的 `/dev` 才有块设备节点）。
+- **initramfs 里没有 `setsid`**（busybox 独立 applet 不一定在）。后台化就用 shell 的 `&`，别指望 coreutils。
+- **busybox 可能是动态链接**：跨过 `switch_root` 后它依赖的 `ld-linux-aarch64.so.1` 还在被删掉的老根里。要跨根存活就用静态 busybox，或把 loader 一起放进 exec tmpfs。
+- **看门狗超时留足（≥200 s）并二次确认**：太短会把「慢但正常」的启动硬重启掉；`/run/systemd/system` 判断要复核两次再动手。
+- 交接前完全无法自救时，只能靠硬件狗（这台机器 `phx_rus_conf.kernel_time=240`，实测 2–3 分钟自己复位）。
+
+## 9. 写盘取证的两个数据完整性问题
+
+- **`dd conv=notrunc` 不清零**：新记录比旧记录短时，槽位尾部残留上一次的 dmesg，读的时候会把两次启动的内容混在一起。正解：写前先把整个槽位（64 KiB）清零。
+- **只采信槽位头行**（`### STAGE=… UPTIME=…`，带 nonce 更好），正文按「本次 uptime」交叉验证；头行对不上就是旧数据。
+
+## 10. 二分配置时必须先做的一件事
+
+**先确认基线同血缘**：`git log --oneline A..B` + `git diff --stat A B`。2026-11-08 我拿「特性内核」和「能启动的内核」对比，实际两者还差了 3 个提交、其中驱动文件差 145 行（外加浮充修正），结论直接作废。
+
+- 正确做法：把对照内核所在分支当作**唯一基线**，只在其上逐个/成组加 CONFIG——这样「内核 A 死于 2.8 s、内核 B 进用户态」才真的是配置差异。
+- **验证配置真的生效**：CI 产物常常不含 `.config`（`actions/upload-artifact` v4 默认不传隐藏文件），此时用 `zcat Image.gz | strings | grep -ci <子系统名>` 核对（`mptcp`/`erofs`/`binderfs`/`tls`/`lru_gen` 等）；给 CI 加 `cp .config config.txt` 更省事。
+- 运行时开关能救的就不必编译（如 MGLRU 的 `lru_gen=off`）——但要实测确认它真的生效，2026-11-08 实测 `lru_gen=off` 对本案无效。
