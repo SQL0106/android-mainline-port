@@ -174,3 +174,20 @@ zcat Image.gz-dtb | strings | grep -ci mptcp     # 0 = 没编进去；非 0 = �
 2. **一个符号单独致命、两个一起更早死**这种组合放大很常见，不要因为「单开能过」就认定组合安全；
 3. 判据必须来自产物（nonce / 槽位头行 / `strings`）——三次误判全部发生在用「间接现象」下结论的时候；
 4. 探针的失败路径必须留痕（§7），否则「没测到」会被当成「死了」。
+
+---
+
+## 9. 刷机前的最后一段：同一文件、双重判据
+
+定位出安全配置后，别急着刷。顺序固定：
+
+1. **先验内核**：新内核 + 检查点 ramdisk `fastboot boot` → 探针 `post-N` 递增（实验环境）；
+2. **再做候选文件**：新内核 + **真机 initrd** + 生产 cmdline → `boot-final-prod.img`，记下 sha256 与内核版本串；
+3. **用同一个文件 `fastboot boot`**（不许换 ramdisk、不许重新打包后再刷）→ 验证：
+   - `/proc/version` 里的构建时间与候选一致（这是「从 flash 起的是新内核」的唯一硬证据）；
+   - 特性自证：`/sys/kernel/mm/lru_gen/enabled`、`tcp_available_congestion_control` 含 `bbr`、`/proc/filesystems` 有 `erofs`、`mount -t binder` 成功；
+   - 业务自证：原有服务/充电节点/`dmesg` 无真 oops（注意 `ramoops` 会子串误命中 `oops`）。
+4. **刷前备份**：`dd if=/dev/sde35 of=...`（主线下 `/dev/block/by-name` 不存在，用分区号）；
+5. 通过后才 `fastboot flash boot_b`，重启后再跑一遍第 3 步。
+
+**别用 `strings | grep -ci tls/mptcp` 判断特性是否编进去**：子串误命中极多（`mptcp` 36、`tls` 221 即使没开），只能用来找 `netconsole` 这类独特标识。判断运行时特性要用 sysfs/procfs 的行为证据。
