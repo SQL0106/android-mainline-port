@@ -18,6 +18,7 @@ description: 把主线 Linux 和桌面发行版移植到 Android 手机、平板
 - **中途接手**：先读项目自己的 AGENTS.md、状态表和技术债表，再定位到流程中的哪一步。
 - **做技术决策**：先读 `references/decisions.md` 对应一节的默认做法和规则。
 - **排查故障**：先按 `experience/patterns.md` 判断问题属于哪一类、按通用步骤排查；再用日志里的错误码、函数名、配置项在 `experience/` 里 `grep` 找具体案例。
+- **无屏幕设备要远程跑内核实验（绝大多数真实项目都是这样）**：先读 `experience/operations-and-troubleshooting.md`。构建→内存启动→验证→落盘的标准流程、拿早期日志的唯一可靠办法（initramfs 检查点写裸分区 + `sync`）、验证清单、症状判定表都在那里；「`fastboot boot` 返回 OKAY 但实际回落到 flash」「调试 cmdline 把警告升级成 panic」「换 initramfs 结论就反过来」这类会白烧几天的问题也记在里面。
 - **只做评估**：完成第 0 步，输出评估报告和决策清单。
 
 ## 流程

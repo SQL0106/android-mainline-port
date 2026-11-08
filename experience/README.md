@@ -23,6 +23,7 @@
 | `ubuntu-userspace.md` | Ubuntu 打包、dracut、snap、GNOME 首次设置与桌面默认值 |
 | `build-and-release.md` | 构建流水线、缓存、可复现性、发布 |
 | `testing-and-process.md` | 判断标准、主机脚本、自动化测试、并行协作、子 agent、与用户配合 |
+| `operations-and-troubleshooting.md` | **无屏幕设备远程操作手册**：构建→内存启动→验证→落盘的标准流程、早期日志取证（裸分区检查点）、判读清单、症状判定表、踩坑条目 |
 
 ## 怎么用
 
