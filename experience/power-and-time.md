@@ -111,3 +111,22 @@
 - Linux 下的净充电与快充：需要私有认证和协商，首版通常无法闭合。
 - 异常复位后 RTC 回到 1970 的原因。
 - 休眠唤醒后显示黑屏（见 `display.md`）。
+
+## 无日志硬复位（纯硬件复位）的取证方法
+
+- 现象：负载一上来就整机复位；journal 里没有 `systemd-shutdown`/panic，pstore 空，1 kHz 采样的电源轨电压**纹丝不动**。这类复位不经过内核，靠读日志永远查不到。
+- **先量化，再解释**：找一个可重复的 oracle（本例：`tar -czf` 一个 500 MB、5000+ 小文件的目录树），同一命令连跑 5–10 次统计击杀率。单次成功或失败都不算证据——同一 oracle 在本机 85% 电量时 4/4 必杀，100% 时 0/48、纯电池 0/68。
+- **别沿用"电流尖峰撞 OCP"的故事**：如果多线程满载（8 核 + fio direct 写，loadavg 17）能跑 15 分钟不死，而单线程 gzip 反而会死，那就不是峰值电流问题。先做这个 A/B，能省掉大量错误推理。
+- **用电池内阻否掉"塌压"假说**：1 Hz 采 `voltage_now`，对比空载/满载，`ΔV/ΔI` 就是内阻。本例 30–40 mV @ 2–3 A ≈ 10–20 mΩ（健康）；4.2 V 的锂电池不可能塌到 3 V 级 UVLO。
+- **直接问 PMIC**（最有效的一步）：在设备本机写一个 20 行只读模块，`insmod` 一次把寄存器打进 dmesg，`init` 返回 `-EINVAL` 让它不驻留——不需要交叉编译、不需要 CI、不需要重启、不需要刷机。
+  ```c
+  np = of_find_compatible_node(NULL, NULL, "qcom,pm8998-pon");
+  pdev = of_find_device_by_node(np);
+  rm = dev_get_regmap(pdev->dev.parent, NULL);   /* 父设备才有 regmap */
+  regmap_read(rm, 0x800 + off, &v); pr_info(...);
+  ```
+  坑：PMIC 芯片节点是 **spmi_device**，`of_find_device_by_node` 找不到；要经 PON / charger 这类由 `devm_of_platform_populate` 生成的**子 platform device**，再取 `dev->parent` 的 regmap。
+- **PON 的复位原因寄存器默认没用**：`PON_REASON1/2`、`WARM_RESET_REASON1/2` 是粘滞的，主线从不清零（下游靠 DT `qcom,clear-warm-reset` 在开机后清）。干净 `reboot` 和硬复位后读出来一模一样。必须先清零再复现。
+- `INT_RT_STS` 是**实时**状态不是锁存；复位后读不到"过去发生过什么"。SMB5 的 APSD/故障窗口同理，只有 `*_STATUS` 类字段有历史价值。
+- **长时稳定性要覆盖全 SoC 区间**：拔线自然放电 + 每 10 分钟一次探针，一路跑到 0%（本例 12 h、68 轮、4.30 V → 3.02 V 全过），比"跑 15 分钟没死"强得多。
+- 写循环脚本时的两个自伤坑：① `wait` 不带参数会等 `setsid` 起的遥测子进程，必须 `wait $P1 $P2`；② `pkill -f <模式>` 会匹配到自己命令行里出现的同名文件（含 heredoc 正文），按 PID 过滤或让模式不出现在自己的命令行里。
